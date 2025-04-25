@@ -1,58 +1,72 @@
 import streamlit as st
 import pandas as pd
-import streamlit.components.v1 as components
-import json
+import requests
 
-st.set_page_config("동대문구 돌봄센터 위치 지도", layout="wide")
+# ─── 페이지 셋업 ───
+st.set_page_config("동대문구 돌봄센터 Static Map", layout="wide")
 
-# 1) 데이터
+# ─── 1) 데이터 로드 ───
 df = pd.read_csv("centers.csv", encoding="utf-8-sig")
 
-# 2) 필터 UI
-st.sidebar.header("🔍 필터")
+# ─── 2) 사이드바: 검색 + 필터 + 선택 ───
+st.sidebar.header("🔍 필터 & 선택")
 search = st.sidebar.text_input("센터명 검색")
 cats = sorted({c for subs in df["categories"].str.split(";") for c in subs})
-sel = st.sidebar.multiselect("대상군", cats)
+sel_cats = st.sidebar.multiselect("대상군 선택", cats)
 
+#  필터 적용
 mask = pd.Series(True, index=df.index)
 if search:
     mask &= df["name"].str.contains(search, na=False)
-if sel:
-    mask &= df["categories"].apply(lambda s: any(c in s.split(";") for c in sel))
+if sel_cats:
+    mask &= df["categories"].apply(lambda s: any(c in s for c in sel_cats))
 filtered = df[mask]
-st.markdown(f"### 표시된 센터: {len(filtered)}개")
 
-# 3) JSON 직렬화
-data = filtered.to_dict(orient="records")
-json_data = json.dumps(data, ensure_ascii=False)
+# 선택 리스트 (팝업 대신)
+center_names = filtered["name"].tolist()
+selected_name = st.sidebar.selectbox("상세 보기 (선택)", [""] + center_names)
 
-# 4) HTML + Kakao SDK + 마커 스크립트
-html = f'''<div id="map" style="width:100%;height:650px;"></div>
-<script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=49a701f08a231a6895dca5db6de5869a&libraries=services"></script>
-<script>
-  const map = new kakao.maps.Map(
-    document.getElementById('map'),
-    {{ center: new kakao.maps.LatLng(37.574360,127.039530), level:4 }}
-  );
-  const list = {json_data};
-  list.forEach(item => {{
-    const marker = new kakao.maps.Marker({{
-      map, 
-      position: new kakao.maps.LatLng(item.lat,item.lng),
-      title: item.name
-    }});
-    const content = 
-      '<div style="padding:5px;max-width:250px;">' +
-        '<strong>'+item.name+'</strong><br/>' +
-        '<em>Feature:</em> '+item.feature+'<br/>' +
-        '<em>이벤트:</em> '+item.events.join(', ')+'<br/>' +
-        '<em>프로그램:</em> '+item.programs.join(', ')+'<br/>' +
-        '<em>대상:</em> '+item.categories +
-      '</div>';
-    const iw = new kakao.maps.InfoWindow({{ content }});
-    kakao.maps.event.addListener(marker,'click',()=>iw.open(map, marker));
-  }});
-</script>'''
+st.sidebar.markdown("---")
+if selected_name:
+    info = filtered[filtered["name"] == selected_name].iloc[0]
+    st.sidebar.markdown(f"**{info.name}**")
+    st.sidebar.markdown(f"- Feature: {info.feature}")
+    st.sidebar.markdown(f"- Events: {info.events}")
+    st.sidebar.markdown(f"- Programs: {info.programs}")
+    st.sidebar.markdown(f"- Categories: {info.categories}")
 
-# 5) 실제 스크립트 실행
-components.html(html, height=700, scrolling=False)
+# ─── 3) Static Map 이미지 URL 생성 ───
+# center 파라미터는 "lng,lat"
+if not filtered.empty:
+    # 맵 중심: 첫 번째 필터된 센터
+    center_lng = filtered.iloc[0]["lng"]
+    center_lat = filtered.iloc[0]["lat"]
+else:
+    center_lng, center_lat = 127.039530, 37.574360
+
+# 마커 파라미터: markerType:blue|lat,lng (여러 개는 '|' 로 구분)
+markers = "|".join(
+    f"markerType:blue|{row.lat},{row.lng}"
+    for _, row in filtered.iterrows()
+)
+
+static_url = (
+    "https://dapi.kakao.com/v2/maps/staticmap"
+    f"?center={center_lng},{center_lat}"
+    f"&level=4&size=800x600"
+    f"&markers={markers}"
+)
+
+# ─── 4) REST API 호출 ───
+# Kakao REST API 키 (환경변수로 설정해 두시거나, 직접 넣으셔도 됩니다)
+REST_KEY = "a744cda0e04fc0979044ffbf0904c193"
+headers = {"Authorization": f"KakaoAK {REST_KEY}"}
+
+resp = requests.get(static_url, headers=headers)
+if resp.status_code == 200:
+    st.image(resp.content, caption="동대문구 돌봄센터 분포도")
+else:
+    st.error(f"지도 이미지 로드 실패: status_code={resp.status_code}")
+
+# ─── 5) 표시된 센터 개수 ───
+st.markdown(f"### 표시된 센터 수: {len(filtered)}개")
