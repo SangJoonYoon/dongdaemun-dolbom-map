@@ -1,97 +1,85 @@
 import streamlit as st
 import pandas as pd
 import requests
-from io import BytesIO
+from urllib.parse import quote_plus
 
-#
-# 1) 카카오 REST API 키 (환경변수 또는 .env 파일 활용)
-#
-# .env 파일에
-# KAKAO_REST_API_KEY="a744cda0e04fc0979044ffbf0904c193"
-# 이렇게 적어두고,
-# python-dotenv로 로드해도 됩니다.
-#
-from dotenv import load_dotenv
-import os
-load_dotenv()
-REST_API_KEY = os.getenv("KAKAO_REST_API_KEY")
-if not REST_API_KEY:
-    st.error("카카오 REST API 키를 설정해 주세요.")
-    st.stop()
-
-#
-# 2) 데이터 로드
-#
-centers = pd.read_csv("centers.csv", encoding="utf-8-sig")
-
-#
-# 3) 사이드바 UI: 검색·필터
-#
-st.sidebar.header("🔍 필터")
-
-name_filter = st.sidebar.text_input("센터명 검색")
-target_filter = st.sidebar.selectbox(
-    "대상군 선택",
-    options=["전체"] + sorted(centers["categories"].unique().tolist())
+# ─── 페이지 설정 ───
+st.set_page_config(
+    page_title="동대문구 돌봄센터 Static Map",
+    layout="wide"
 )
 
-# 필터링
-df = centers.copy()
-if name_filter:
-    df = df[df["name"].str.contains(name_filter, case=False, na=False)]
-if target_filter != "전체":
-    df = df[df["categories"] == target_filter]
+# ─── 1) 데이터 로드 ───
+df = pd.read_csv("centers.csv", encoding="utf-8-sig")
 
-st.sidebar.markdown(f"표시된 센터 수: **{len(df)}개**")
+# ─── 2) 사이드바 검색·필터·상세 보기 ───
+st.sidebar.header("🔍 필터 & 상세보기")
 
-#
-# 4) 본문: Static Map 요청
-#
-st.title("동대문구 돌봄센터 위치 지도")
-st.write(f"총 {len(df)}개 센터를 지도에 표시합니다.")
+search = st.sidebar.text_input("센터명 검색")
 
-if len(df)==0:
-    st.info("조건에 맞는 센터가 없습니다.")
-    st.stop()
+# categories 에서 고유 대상군 목록 추출
+all_cats = sorted({
+    c for sub in df["categories"].dropna().tolist()
+      for c in sub.split(";")
+})
+sel_cats = st.sidebar.multiselect("대상군 선택", all_cats)
 
-# 중간 중심점: 첫 번째 센터를 중심으로 잡거나, 평균 좌표
-center_lat = df["lat"].mean()
-center_lng = df["lng"].mean()
+# 필터 적용
+mask = pd.Series(True, index=df.index)
+if search:
+    mask &= df["name"].str.contains(search, na=False)
+if sel_cats:
+    mask &= df["categories"].apply(
+        lambda s: any(c in s.split(";") for c in sel_cats)
+    )
+filtered = df[mask]
 
-# 마커 문자열: "lat,lng|lat2,lng2|..."
-markers = "|".join(f"{row.lat},{row.lng}" for row in df.itertuples())
+# 상세보기 selectbox
+detail = st.sidebar.selectbox(
+    "상세 정보 보기",
+    [""] + filtered["name"].tolist()
+)
+if detail:
+    info = filtered[filtered["name"] == detail].iloc[0]
+    st.sidebar.markdown(f"## {info.name}")
+    st.sidebar.markdown(f"- **Feature:** {info.feature}")
+    st.sidebar.markdown(f"- **Events:** {info.events}")
+    st.sidebar.markdown(f"- **Programs:** {info.programs}")
+    st.sidebar.markdown(f"- **Categories:** {info.categories}")
 
-# Static Map 파라미터
-level = 4   # 고정 줌 레벨, 필요에 따라 UI로 노출 가능
+# ─── 3) Static Map URL 생성 ───
+if not filtered.empty:
+    cen_lat = filtered.iloc[0]["lat"]
+    cen_lng = filtered.iloc[0]["lng"]
+else:
+    cen_lat, cen_lng = 37.574360, 127.039530
+
 size = "640x640"
+
+# markers: "lng,lat|lng,lat|..."
+marker_list = [f"{row.lng},{row.lat}" for _, row in filtered.iterrows()]
+markers_param = quote_plus("|".join(marker_list))
 
 static_url = (
     "https://dapi.kakao.com/v2/maps/staticmap"
-    f"?center={center_lat},{center_lng}"
-    f"&level={level}"
+    f"?center={cen_lng},{cen_lat}"
+    f"&level=4"
     f"&size={size}"
-    f"&markers={markers}"
+    f"&markers={markers_param}"
 )
 
-# 요청
-headers = {"Authorization": f"KakaoAK {REST_API_KEY}"}
+# ─── 4) 호출 URL 디버그 ───
+st.code("▶ Kakao Static Map URL:\n" + static_url)
+
+# ─── 5) 이미지 요청 & 표시 ───
+REST_KEY = "a744cda0e04fc0979044ffbf0904c193"  # 본인의 REST API 키
+headers = {"Authorization": f"KakaoAK {REST_KEY}"}
 resp = requests.get(static_url, headers=headers)
 
-if resp.status_code != 200:
-    st.error(f"지도 이미지 로드 실패: status_code={resp.status_code}")
+if resp.status_code == 200:
+    st.image(resp.content, caption="동대문구 돌봄센터 분포도")
 else:
-    # 이미지 표시
-    st.image(resp.content, use_column_width=True)
+    st.error(f"지도 이미지 로드 실패: status_code={resp.status_code}")
 
-#
-# 5) 상세 정보 보기
-#
-st.markdown("---")
-st.subheader("상세 정보 보기")
-choose = st.selectbox("상세 정보 열기", ["선택하세요"] + df["name"].tolist())
-if choose != "선택하세요":
-    row = df[df["name"] == choose].iloc[0]
-    st.markdown(f"**센터명:** {row.name}")
-    st.markdown(f"**위치:** {row.lat}, {row.lng}")
-    st.markdown(f"**기능:** {row.feature}")
-    st.markdown(f"**대상군:** {row.categories}")
+# ─── 6) 하단 센터 개수 ───
+st.markdown(f"### 표시된 센터 수: {len(filtered)}개")
