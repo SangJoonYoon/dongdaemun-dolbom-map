@@ -27,40 +27,55 @@ filtered = df[mask]
 # 4) 헤드라인
 st.markdown(f"### 표시된 센터 수: {len(filtered)}개")
 
-# 5) Kakao Map HTML 생성
-#    JSON으로 변환 (ensure_ascii=False 로 한글 유지)
+# 5) Kakao Map HTML 생성 (load 지연 호출 적용)
 centers_list = filtered.to_dict(orient="records")
 json_data = json.dumps(centers_list, ensure_ascii=False)
 
 html = f"""
 <div id="map" style="width:100%;height:600px;"></div>
-<script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=49a701f08a231a6895dca5db6de5869a"></script>
+
+<!-- SDK를 autoload=false 로 불러옵니다 -->
+<script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=49a701f08a231a6895dca5db6de5869a&autoload=false"></script>
+
 <script>
-  const map = new kakao.maps.Map(
+// SDK 로드가 완료되면 callback 안의 함수가 실행됩니다.
+kakao.maps.load(function() {{
+  // 1) 맵 객체 생성
+  var map = new kakao.maps.Map(
     document.getElementById('map'),
-    {{ center: new kakao.maps.LatLng(37.574360, 127.039530), level: 4 }}
+    {{
+      center: new kakao.maps.LatLng(37.574360, 127.039530),
+      level: 4
+    }}
   );
-  const data = {json_data};
-  data.forEach(item => {{
-    const marker = new kakao.maps.Marker({{
+
+  // 2) 데이터로 마커·인포윈도우 찍기
+  var data = {json_data};
+  data.forEach(function(item) {{
+    var marker = new kakao.maps.Marker({{
       map: map,
       position: new kakao.maps.LatLng(item.lat, item.lng),
       title: item.name
     }});
-    const infoContent = `
+
+    var content = `
       <div style="padding:5px;max-width:250px;">
         <strong>${{item.name}}</strong><br/>
         <em>Feature:</em> ${{item.feature}}<br/>
-        <em>Programs:</em> ${{item.events}};<br/>
-        <em>Activities:</em> ${{item.programs}}<br/>
+        <em>Events:</em> ${{item.events}}<br/>
+        <em>Programs:</em> ${{item.programs}}<br/>
         <em>Categories:</em> ${{item.categories}}
       </div>
     `;
-    const infowindow = new kakao.maps.InfoWindow({{ content: infoContent }});
-    kakao.maps.event.addListener(marker, 'click', () => {{ infowindow.open(map, marker); }});
+    var infowindow = new kakao.maps.InfoWindow({{ content: content }});
+    kakao.maps.event.addListener(marker, 'click', function() {{
+      infowindow.open(map, marker);
+    }});
   }});
+}});
 </script>
 """
 
 # 6) 지도 렌더링
 components.html(html, height=650, scrolling=False)
+
