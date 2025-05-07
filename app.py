@@ -23,20 +23,18 @@ st.sidebar.markdown(f"- 전체 센터: **{len(centers)}개**")
 # 3) 상단 배너: 동 선택 버튼 바
 st.title("📍 동대문구 돌봄센터 지도")
 
-# 동 이름 목록
 dongs = sorted(centers["dong"].unique())
-# session_state 초기값 읽기
-sel = st.session_state.get("selected_dong", "전체")
-# “전체” 옵션도 추가
 all_buttons = ["전체"] + dongs
-
 cols = st.columns(len(all_buttons))
+sel = st.session_state.get("selected_dong", "전체")
+
 for idx, dong in enumerate(all_buttons):
-    # 선택된 버튼은 강조 표시
-    btn_style = {"info": True} if sel == dong else {}
-    if cols[idx].button(dong, key=f"btn_{dong}", **btn_style):
+    # 선택된 동 앞에 ▶ 표시
+    label = f"▶ {dong}" if sel == dong else dong
+    if cols[idx].button(label, key=f"btn_{dong}"):
         sel = dong
         st.session_state["selected_dong"] = dong
+
 
 # 4) 선택된 동 기준 필터링
 if sel != "전체":
