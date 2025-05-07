@@ -1,117 +1,83 @@
 import streamlit as st
 import pandas as pd
-import geopandas as gpd
 import requests
 import folium
-from folium.plugins import MarkerCluster
 from streamlit_folium import st_folium
-from io import StringIO
 
-st.set_page_config(page_title="동대문구 돌봄센터 지도", layout="wide")
+# --- 1) 데이터 로드 ---------------------------------------------------------
+centers = pd.read_csv("centers.csv")
 
-# 1) 돌봄센터 데이터
-df = pd.read_csv("centers.csv", encoding="utf-8-sig")
-df["dong"] = df["name"].str.extract(r"^(.+?동)")
+# --- 2) 사이드바 UI : 동 선택 -----------------------------------------------
+st.sidebar.header("🗺️ 동 선택")
+all_dongs = sorted(centers["dong"].unique().tolist())
+selected_dong = st.sidebar.selectbox("행정동 선택", ["전체"] + all_dongs)
 
-# 2) 행정경계 GeoJSON 로드 (GitHub RAW)
-GEO_URL = (
-    "https://raw.githubusercontent.com/southkorea/southkorea-maps"
-    "/master/kostat/2013/json/skorea_submunicipalities_geo_simple.json"
-)
-gdf = gpd.read_file(StringIO(requests.get(GEO_URL).text))
-gdf_ddm = gdf[gdf["SIG_KOR_NM"] == "동대문구"].copy()
-gdf_ddm["dong"] = gdf_ddm["EMD_KOR_NM"]
-
-# 3) 사이드바 필터
-with st.sidebar:
-    st.header("🔍 필터")
-    search = st.text_input("센터명 검색")
-    cats = sorted({c for subs in df["categories"].dropna() for c in subs.split(";")})
-    selected_cats = st.multiselect("대상군 선택", cats)
-
-    mask = pd.Series(True, index=df.index)
-    if search:
-        mask &= df["name"].str.contains(search, case=False, na=False)
-    if selected_cats:
-        mask &= df["categories"].apply(
-            lambda s: any(c in s.split(";") for c in selected_cats)
-        )
-    base = df[mask]
-    st.markdown(f"**총 센터:** {len(base)}개")
-
-# 4) 동 선택
-st.markdown("## 🔘 동 선택")
-dongs = sorted(base["dong"].dropna().unique())
-cols = st.columns(min(6, len(dongs)))
-sel = st.session_state.get("selected_dong", None)
-for i, dong in enumerate(dongs):
-    if cols[i % len(cols)].button(dong, key=dong):
-        sel = dong
-        st.session_state["selected_dong"] = dong
-if st.button("전체 보기"):
-    sel = None
-    st.session_state["selected_dong"] = None
-
-# 5) 카카오 키워드 검색으로 정확한 동 이름(Region_3depth) 가져오기
-region_name = sel
-if sel:
-    kakao_url = "https://dapi.kakao.com/v2/local/search/address.json"
-    headers   = {"Authorization": "KakaoAK a744cda0e04fc0979044ffbf0904c193"}
-    params    = {"query": f"{sel} 동대문구", "size":1}
-    docs      = requests.get(kakao_url, headers=headers, params=params).json().get("documents")
-    if docs:
-        region_name = docs[0]["address"]["region_3depth_name"]
-
-# 6) 최종 필터링
-if sel:
-    filtered = base[base["dong"] == sel]
-    st.markdown(f"### 선택된 동: **{sel}** ({len(filtered)}개)")
+# 센터 필터링
+if selected_dong != "전체":
+    df = centers[centers["dong"] == selected_dong]
 else:
-    filtered = base
-    st.markdown(f"### 전체 센터 표시 ({len(filtered)}개)")
+    df = centers.copy()
 
-if filtered.empty:
-    st.warning("조건에 맞는 센터가 없습니다.")
-    st.stop()
+st.sidebar.markdown(f"표시된 센터: **{len(df)}개**")
 
-# 7) Folium 지도
-center_lat = float(filtered["lat"].mean())
-center_lng = float(filtered["lng"].mean())
-zoom       = 16 if sel else 14
-m = folium.Map(location=[center_lat, center_lng], zoom_start=zoom)
-cluster = MarkerCluster().add_to(m)
+# --- 3) Folium 지도 생성 ---------------------------------------------------
+# 지도의 초기 중심: 필터된 센터의 평균 좌표
+if len(df) > 0:
+    center_lat = df["lat"].mean()
+    center_lng = df["lng"].mean()
+else:
+    # 센터가 없으면 동대문구 대략 중앙
+    center_lat, center_lng = 37.57436, 127.03953
 
-# 7-1) GeoJSON 하이라이트 (region_name 으로 매칭)
-if region_name:
-    sel_geo = gdf_ddm[gdf_ddm["dong"] == region_name]
-    if not sel_geo.empty:
-        folium.GeoJson(
-            sel_geo,
-            style_function=lambda feat: {
-                "fillColor": "#4287f5",
-                "color": "#1f3b82",
-                "weight": 2,
-                "fillOpacity": 0.2
-            }
-        ).add_to(m)
+m = folium.Map(location=[center_lat, center_lng], zoom_start=13)
 
-# 7-2) 돌봄센터 마커
-for _, r in filtered.iterrows():
-    popup = folium.Popup(f"""
-      <div style="font-family:Arial; font-size:13px;">
-        <strong>{r['name']}</strong><br/>
-        <em>Feature:</em> {r['feature']}<br/>
-        <em>Events:</em> {r.get('events','-')}<br/>
-        <em>Programs:</em> {r.get('programs','-')}<br/>
-        <em>Categories:</em> {r['categories']}
-      </div>
-    """, max_width=300)
+# 3-1) 센터 마커 찍기
+for _, row in df.iterrows():
+    popup = folium.Popup(
+        f"<strong>{row['name']}</strong><br>"
+        f"기능: {row['feature']}<br>"
+        f"행사: {row['events']}<br>"
+        f"프로그램: {row['programs']}<br>"
+        f"대상: {row['categories']}",
+        max_width=300
+    )
     folium.Marker(
-        location=(r["lat"], r["lng"]),
+        [row["lat"], row["lng"]],
+        tooltip=row["name"],
         popup=popup,
-        icon=folium.Icon(color="darkblue", icon="info-sign")
-    ).add_to(cluster)
+        icon=folium.Icon(color="blue", icon="info-sign")
+    ).add_to(m)
 
-# 8) 렌더링
-st.title("동대문구 돌봄센터 지도")
-st_folium(m, width="100%", height=650)
+# 3-2) 동대문구 GeoJSON 불러와서 폴리곤 그리기
+GEOJSON_URL = (
+    "https://raw.githubusercontent.com/"
+    "vuski/admdongkor/main/geojson/행정동_시군구별/서울특별시.geojson"
+)
+geojson = requests.get(GEOJSON_URL).json()
+
+def style_fn(feature):
+    # 'properties.adm_nm' 예: "서울특별시 동대문구 회기동"
+    name = feature["properties"].get("adm_nm", "")
+    is_this = selected_dong in name  # e.g. "회기동" in "서울특별시 동대문구 회기동"
+    return {
+        "fillColor": "#0055FF" if is_this else "#ffffff",
+        "color": "#0055FF" if is_this else "#999999",
+        "weight": 2 if is_this else 1,
+        "fillOpacity": 0.3 if is_this else 0.0,
+    }
+
+# 서울시 전체 -> 동대문구만 필터링 & 적용
+# 여기서는 지오JSON 전체를 추가하되 style_fn 으로 동대문구만 하이라이트
+folium.GeoJson(
+    geojson,
+    name="행정동경계",
+    style_function=style_fn,
+    tooltip=folium.GeoJsonTooltip(fields=["adm_nm"], aliases=["행정동"])
+).add_to(m)
+
+# --- 4) Streamlit에 렌더링 --------------------------------------------------
+st.title("📍 동대문구 돌봄센터 & 행정동 하이라이트")
+st.markdown("사이드바에서 행정동을 선택하면 해당 동 경계가 반투명으로 강조됩니다.")
+
+# folium 으로 그린 지도 표시
+st_data = st_folium(m, width=700, height=500)
