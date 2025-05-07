@@ -1,4 +1,3 @@
-# app.py
 import streamlit as st
 import pandas as pd
 import requests
@@ -16,29 +15,57 @@ if "dong" not in centers.columns:
     st.error("❗ centers.csv에 'dong' 컬럼이 없습니다.")
     st.stop()
 
-# 2) 사이드바: 동 선택
-st.sidebar.header("🗺️ 행정동 선택")
+# 2) 사이드바: 표시할 센터 수만
+st.sidebar.header("🗺️ 현재 표시된 센터")
+# (동 선택은 아래 배너에서)
+st.sidebar.markdown(f"- 전체 센터: **{len(centers)}개**")
+
+# 3) 상단 배너: 동 선택 버튼 바
+st.title("📍 동대문구 돌봄센터 지도")
+
+# 동 이름 목록
 dongs = sorted(centers["dong"].unique())
-sel = st.sidebar.selectbox("동을 선택하세요", ["전체"] + dongs)
+# session_state 초기값 읽기
+sel = st.session_state.get("selected_dong", "전체")
+# “전체” 옵션도 추가
+all_buttons = ["전체"] + dongs
 
-df = centers if sel == "전체" else centers[centers["dong"] == sel]
-st.sidebar.markdown(f"- 표시 대상 센터: **{len(df)}개**")
+cols = st.columns(len(all_buttons))
+for idx, dong in enumerate(all_buttons):
+    # 선택된 버튼은 강조 표시
+    btn_style = {"info": True} if sel == dong else {}
+    if cols[idx].button(dong, key=f"btn_{dong}", **btn_style):
+        sel = dong
+        st.session_state["selected_dong"] = dong
 
-# 3) Folium 지도 준비
+# 4) 선택된 동 기준 필터링
+if sel != "전체":
+    df = centers[centers["dong"] == sel]
+else:
+    df = centers.copy()
+
+# 사이드바에도 갱신된 개수 표시
+st.sidebar.markdown(f"- 선택된 센터: **{len(df)}개**")
+
+# 5) Folium 지도 초기화
 if not df.empty:
     center = [df["lat"].mean(), df["lng"].mean()]
+    zoom  = 14 if sel=="전체" else 16
 else:
     center = [37.574360, 127.039530]
-m = folium.Map(location=center, zoom_start=13)
+    zoom   = 13
 
-# 4) 센터 마커
+m = folium.Map(location=center, zoom_start=zoom)
+
+# 6) 센터 마커
 for _, r in df.iterrows():
     popup = folium.Popup(
         f"<b>{r['name']}</b><br>"
         f"기능: {r['feature']}<br>"
         f"행사: {r.get('events','-')}<br>"
         f"프로그램: {r.get('programs','-')}<br>"
-        f"대상: {r['categories']}", max_width=300
+        f"대상: {r['categories']}",
+        max_width=300
     )
     folium.Marker(
         [r["lat"], r["lng"]],
@@ -47,8 +74,7 @@ for _, r in df.iterrows():
         icon=folium.Icon(color="blue", icon="info-sign")
     ).add_to(m)
 
-# 5) 행정동 GeoJSON (서울특별시) 불러와서 하이라이트
-#    ※ Local_HangJeongDong 레포의 서울특별시 파일 사용
+# 7) GeoJSON 불러와서 선택된 동만 하이라이트
 GEOJSON_URL = (
     "https://raw.githubusercontent.com/"
     "raqoon886/Local_HangJeongDong/master/"
@@ -57,30 +83,24 @@ GEOJSON_URL = (
 res = requests.get(GEOJSON_URL)
 try:
     res.raise_for_status()
+    geojson = res.json()
+    def style_fn(feat):
+        name = feat["properties"].get("adm_nm","")
+        is_sel = (sel!="전체" and sel in name)
+        return {
+            "fillColor": "#0055FF" if is_sel else "#ffffff",
+            "color":     "#0055FF" if is_sel else "#999999",
+            "weight":    2 if is_sel else 1,
+            "fillOpacity": 0.3 if is_sel else 0.0,
+        }
+    folium.GeoJson(
+        geojson,
+        name="행정동경계",
+        style_function=style_fn,
+        tooltip=folium.GeoJsonTooltip(fields=["adm_nm"], aliases=["행정동"])
+    ).add_to(m)
 except requests.exceptions.HTTPError:
-    st.error(f"경계 데이터 로드 실패: {res.status_code}")
-    st.stop()
+    st.warning("⚠️ 경계 데이터 로드에 실패했습니다.")
 
-geojson = res.json()
-
-def style_fn(feat):
-    nm = feat["properties"].get("adm_nm", "")
-    is_sel = (sel != "전체" and sel in nm)
-    return {
-        "fillColor": "#0055FF" if is_sel else "#ffffff",
-        "color":     "#0055FF" if is_sel else "#999999",
-        "weight":    2 if is_sel else 1,
-        "fillOpacity": 0.3 if is_sel else 0.0,
-    }
-
-folium.GeoJson(
-    geojson,
-    name="행정동경계",
-    style_function=style_fn,
-    tooltip=folium.GeoJsonTooltip(fields=["adm_nm"], aliases=["행정동"])
-).add_to(m)
-
-# 6) 렌더링
-st.title("📍 동대문구 돌봄센터 & 행정동 하이라이트")
-st.markdown("사이드바에서 동을 선택하면 해당 동 경계가 반투명 파란색으로 강조됩니다.")
+# 8) 스트림릿에 맵 렌더링
 st_folium(m, width=700, height=500)
