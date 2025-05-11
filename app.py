@@ -18,8 +18,10 @@ except FileNotFoundError:
     st.error("❗ centers.csv 파일을 찾을 수 없습니다.")
     st.stop()
 
-if "dong" not in centers.columns or "programs" not in centers.columns:
-    st.error("❗ centers.csv에 'dong' 및 'programs' 컬럼이 모두 있어야 합니다.")
+required_cols = {"dong", "programs", "name", "lat", "lng", "categories"}
+if not required_cols.issubset(centers.columns):
+    missing = required_cols - set(centers.columns)
+    st.error(f"❗ centers.csv에 다음 컬럼이 없습니다: {', '.join(missing)}")
     st.stop()
 
 # ─── 사이드바 메뉴 ───────────────────────────────────────
@@ -53,7 +55,7 @@ if page == "소개":
 elif page == "건강지원센터지도":
     st.title("📍 건강지원센터 위치")
     # 필터 UI
-    c1, c2, c3 = st.columns([2,3,3])
+    c1, c2, c3 = st.columns([2, 3, 3])
     with c1:
         sel_dong = st.selectbox("행정동", ["전체"] + sorted(centers["dong"].unique()))
     with c2:
@@ -64,8 +66,8 @@ elif page == "건강지원센터지도":
 
     # 필터링
     mask = pd.Series(True, index=centers.index)
-    if sel_dong!="전체":
-        mask &= centers["dong"]==sel_dong
+    if sel_dong != "전체":
+        mask &= centers["dong"] == sel_dong
     if kw:
         mask &= centers["name"].str.contains(kw, case=False, na=False)
     if sel_cats:
@@ -76,10 +78,10 @@ elif page == "건강지원센터지도":
     # 지도 생성
     if not df.empty:
         lat, lng = df["lat"].mean(), df["lng"].mean()
-        zoom = 14 if sel_dong=="전체" else 16
+        zoom = 14 if sel_dong == "전체" else 16
     else:
         lat, lng, zoom = 37.57436, 127.03953, 13
-    m = folium.Map(location=[lat,lng], zoom_start=zoom, tiles="cartodbpositron")
+    m = folium.Map(location=[lat, lng], zoom_start=zoom, tiles="cartodbpositron")
 
     # 행정동 GeoJSON 하이라이트
     GEO_URL = (
@@ -89,8 +91,8 @@ elif page == "건강지원센터지도":
     )
     gj = requests.get(GEO_URL).json()
     def style_fn(feat):
-        name = feat["properties"].get("adm_nm","")
-        sel = (sel_dong!="전체" and sel_dong in name)
+        name = feat["properties"].get("adm_nm", "")
+        sel = (sel_dong != "전체" and sel_dong in name)
         return {
             "fillColor": "#0055FF" if sel else "#ffffff",
             "color":     "#0055FF" if sel else "#999999",
@@ -105,8 +107,11 @@ elif page == "건강지원센터지도":
 
     # 센터 마커
     for _, r in df.iterrows():
-        display = r["name"].replace("돌봄센터","건강지원센터")
-        popup = folium.Popup(f"<strong>{display}</strong><br>{r.get('programs','-')}", max_width=300)
+        display = r["name"].replace("돌봄센터", "건강지원센터")
+        popup = folium.Popup(
+            f"<strong>{display}</strong><br>{r.get('programs','-')}",
+            max_width=300
+        )
         folium.Marker(
             [r["lat"], r["lng"]],
             tooltip=display,
@@ -118,28 +123,32 @@ elif page == "건강지원센터지도":
 
 # ─── 3️⃣ 프로그램 목록 페이지 ───────────────────────────────────
 elif page == "프로그램 목록":
-    st.title("📋 현재 운영중인 프로그램")
+    st.title("📋 현재 운영중인 프로그램 및 제공 센터")
 
     # programs 컬럼 분리 → explode → 빈값 제거
-    df_prog = centers[["dong","programs"]].fillna("").copy()
+    df_prog = centers[["name","dong","programs"]].fillna("").copy()
     df_prog["programs"] = df_prog["programs"].str.split(";")
     df_prog = df_prog.explode("programs")
     df_prog["programs"] = df_prog["programs"].str.strip()
-    df_prog = df_prog[df_prog["programs"]!=""]
+    df_prog = df_prog[df_prog["programs"] != ""]
 
-    # 그룹핑: 프로그램별 고유 동 목록
-    grouped = df_prog.groupby("programs")["dong"].unique()
-    if grouped.empty:
+    # 고유 프로그램 목록
+    programs = sorted(df_prog["programs"].unique())
+
+    if not programs:
         st.info("등록된 프로그램이 없습니다.")
     else:
-        for prog, dongs in grouped.items():
-            st.markdown(f"**{prog}**: {', '.join(sorted(dongs))}")
+        for prog in programs:
+            prog_df = df_prog[df_prog["programs"] == prog]
+            with st.expander(f"{prog} ({len(prog_df)}개 센터)"):
+                for _, row in prog_df.iterrows():
+                    st.markdown(f"- **{row['name']}** ({row['dong']})")
 
 # ─── 4️⃣ 프로그램 신청 페이지 ─────────────────────────────────
 else:  # 프로그램 신청
     st.title("📝 프로그램 신청")
 
-    # 프로그램 리스트 재생성
+    # 신청 가능한 프로그램 리스트
     df_prog = centers[["programs"]].fillna("").copy()
     df_prog["programs"] = df_prog["programs"].str.split(";")
     df_prog = df_prog.explode("programs")
