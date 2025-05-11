@@ -17,148 +17,119 @@ try:
 except FileNotFoundError:
     st.error("❗ centers.csv 파일을 찾을 수 없습니다.")
     st.stop()
-
 if "dong" not in centers.columns:
     st.error("❗ centers.csv에 'dong' 컬럼이 없습니다.")
     st.stop()
 
-# ─── 스타일 개선 ─────────────────────────────────────────
-st.markdown("""
-    <style>
-    .sidebar .sidebar-content {
-        background-color: #f4f4f4;
-    }
-    .stButton>button {
-        background-color: #4CAF50;
-        color: white;
-        border-radius: 5px;
-        padding: 8px 16px;
-        margin: 5px 0;
-    }
-    .stButton>button:hover {
-        background-color: #45a049;
-    }
-    .stTextInput>div>input {
-        border: 1px solid #ccc;
-        border-radius: 5px;
-        padding: 6px;
-    }
-    .stSelectbox>div>div {
-        border: 1px solid #ccc;
-        border-radius: 5px;
-    }
-    </style>
-""", unsafe_allow_html=True)
+# ─── 더미 프로그램 데이터 ─────────────────────────────────
+programs_data = [
+    {"카테고리": "건강생활", "프로그램명": "생활체육 요가 교실", "기간": "5/1~6/30", "대상": "성인", "장소": "구민체육센터"},
+    {"카테고리": "정신건강", "프로그램명": "마음건강 상담 챗봇", "기간": "상시", "대상": "전체", "장소": "온라인"},
+    {"카테고리": "가족지원", "프로그램명": "부모-자녀 워크숍", "기간": "7/15", "대상": "부모·자녀", "장소": "건강가정지원센터"}
+]
+programs_df = pd.DataFrame(programs_data)
 
-# ─── 레이아웃: 사이드바 메뉴 ────────────────────────────
+# ─── 사이드바 메뉴 ───────────────────────────────────────
 st.sidebar.header("📌 메뉴")
-page = st.sidebar.radio(
-    "이동할 페이지를 선택하세요",
-    ["소개", "건강지원센터 지도", "프로그램 신청"]
-)
+page = st.sidebar.radio("", ["소개", 
+                             "건강지원센터지도", 
+                             "프로그램 목록", 
+                             "프로그램 신청"])
 
-# ─── 소개 페이지 ──────────────────────────────────────────
+# ─── 소개 페이지 ─────────────────────────────────────────
 if page == "소개":
     st.title("🏥 건강지원센터 소개")
     st.markdown(
         """
         **1. 동대문구 각 동별 건강지원센터 설립**  
-        - 병원 인프라가 약한 상위 3개 동 우선  
         **2. 병원 연계 사후관리**  
-        - 진료 환자 사후관리, 미진료 주민 기초 검사·상담  
         **3. 1:1 맞춤 건강증진 프로그램 & 병원 추천**  
         **4. 건강동아리 구성**  
-        - 보건소·학교·복지관 협약, 주민 설문 기반 체험·교육  
 
         ### 🎯 목적
-        1. 만성질환 조기 예방  
-        2. 건강생활습관 개선 프로그램 제공
+        - 만성질환 조기 예방  
+        - 건강생활습관 개선 프로그램 제공
         """
     )
     st.image("https://source.unsplash.com/1600x400/?health,clinic")
 
-# ─── 건강지원센터 지도 페이지 ──────────────────────────────
-elif page == "건강지원센터 지도":
+# ─── 지도 페이지 ─────────────────────────────────────────
+elif page == "건강지원센터지도":
     st.title("📍 건강지원센터 위치 지도")
 
-    # ── 필터 바 ──────────────────────────────────
-    st.markdown("### 🔍 센터 필터")
-    col1, col2, col3 = st.columns([2, 3, 3])
-    with col1:
-        selected_dong = st.selectbox(
-            "행정동",
-            options=["전체"] + sorted(centers["dong"].unique().tolist()),
-            key="filter_dong"
-        )
-    with col2:
-        name_query = st.text_input(
-            "센터명 검색",
-            placeholder="예) 회기, 주민",
-            key="filter_name"
-        )
-    with col3:
-        all_cats = sorted({c for subs in centers["categories"].dropna() for c in subs.split(";")})
-        selected_cats = st.multiselect(
-            "대상군",
-            options=all_cats,
-            key="filter_cats"
-        )
+    # 필터 UI
+    f1, f2, f3 = st.columns([2,3,3])
+    with f1:
+        selected_dong = st.selectbox("행정동", ["전체"] + sorted(centers["dong"].unique()))
+    with f2:
+        name_q = st.text_input("센터명 검색", placeholder="예) 회기센터")
+    with f3:
+        cats = sorted({c for subs in centers["categories"].dropna() for c in subs.split(";")})
+        selected_cats = st.multiselect("대상군", cats)
 
-    # ── 필터 적용 ──────────────────────────────────
+    # 필터링
     mask = pd.Series(True, index=centers.index)
-    if selected_dong != "전체":
-        mask &= centers["dong"] == selected_dong
-    if name_query:
-        mask &= centers["name"].str.contains(name_query, case=False, na=False)
+    if selected_dong!="전체":
+        mask &= centers["dong"]==selected_dong
+    if name_q:
+        mask &= centers["name"].str.contains(name_q, case=False)
     if selected_cats:
-        mask &= centers["categories"].apply(
-            lambda s: any(c in s.split(";") for c in selected_cats)
-        )
-    filtered = centers[mask]
-    st.caption(f"표시된 센터: {len(filtered)}개")
+        mask &= centers["categories"].apply(lambda s: any(c in s.split(";") for c in selected_cats))
+    df = centers[mask]
+    st.caption(f"표시된 센터: {len(df)}개")
 
-    # ── 지도 표시 ──────────────────────────────────
-    if not filtered.empty:
-        center_lat = filtered["lat"].mean()
-        center_lng = filtered["lng"].mean()
-        zoom_start = 14 if selected_dong == "전체" else 16
+    # 지도 생성
+    if not df.empty:
+        lat, lng = df["lat"].mean(), df["lng"].mean()
+        zoom = 14 if selected_dong=="전체" else 16
     else:
-        center_lat, center_lng = 37.574360, 127.039530
-        zoom_start = 13
+        lat, lng, zoom = 37.57436,127.03953,13
+    m = folium.Map(location=[lat,lng], zoom_start=zoom)
 
-    m = folium.Map(location=[center_lat, center_lng], zoom_start=zoom_start)
+    # 동 하이라이트
+    GEO = "https://raw.githubusercontent.com/raqoon886/Local_HangJeongDong/master/hangjeongdong_서울특별시.geojson"
+    geo = requests.get(GEO).json()
+    def style_fn(feat):
+        name=feat["properties"]["adm_nm"]
+        sel = (selected_dong!="전체" and selected_dong in name)
+        return {
+            "fillColor":"#0055FF" if sel else "#ffffff",
+            "color":"#0055FF" if sel else "#999999",
+            "weight":2 if sel else 1,
+            "fillOpacity":0.3 if sel else 0.0
+        }
+    folium.GeoJson(geo, style_function=style_fn,
+                   tooltip=folium.GeoJsonTooltip(fields=["adm_nm"],aliases=["행정동"])
+    ).add_to(m)
 
-    # 센터 마커
-    for _, r in filtered.iterrows():
-        name = r["name"]
-        popup_html = (
-            f"<strong>{name}</strong><br>"
-            f"기능: {r['feature']}<br>"
-            f"행사: {r.get('events', '-')}<br>"
-            f"프로그램: {r.get('programs', '-')}<br>"
-            f"대상: {r['categories']}"
-        )
+    # 마커
+    for _,r in df.iterrows():
         folium.Marker(
-            location=[r["lat"], r["lng"]],
-            popup=popup_html,
-            tooltip=name,
-            icon=folium.Icon(color="blue", icon="info-sign")
+            [r.lat,r.lng],
+            tooltip=r.name,
+            popup=f"<b>{r.name}</b><br>{r.feature}",
+            icon=folium.Icon(color="green")
         ).add_to(m)
 
-    # 지도 출력
-    st_folium(m, width="100%", height=600)
+    st_folium(m, height=600, width="100%")
 
-# ─── 프로그램 신청 페이지 ──────────────────────────────
-elif page == "프로그램 신청":
+# ─── 프로그램 목록 페이지 ─────────────────────────────────
+elif page == "프로그램 목록":
+    st.title("📋 프로그램 목록")
+    for _, p in programs_df.iterrows():
+        with st.expander(f"{p['프로그램명']} ({p['카테고리']})"):
+            st.write(f"- 기간: {p['기간']}")
+            st.write(f"- 대상: {p['대상']}")
+            st.write(f"- 장소: {p['장소']}")
+
+# ─── 프로그램 신청 페이지 ─────────────────────────────────
+else:  # 프로그램 신청
     st.title("📝 프로그램 신청")
-    st.markdown("### 💡 원하는 프로그램을 선택하여 신청하세요.")
-
-    program_name = st.text_input("프로그램 이름", placeholder="예: 건강 체조")
-    participant_name = st.text_input("신청자 이름")
-    contact = st.text_input("연락처", placeholder="010-1234-5678")
-
+    prog = st.selectbox("프로그램 선택", programs_df["프로그램명"])
+    name = st.text_input("이름")
+    contact = st.text_input("연락처")
     if st.button("신청하기"):
-        if program_name and participant_name and contact:
-            st.success(f"✅ {program_name} 신청이 완료되었습니다!")
+        if prog and name and contact:
+            st.success(f"✅ '{prog}' 신청이 완료되었습니다!")
         else:
-            st.error("❗ 모든 정보를 입력해주세요.")
+            st.error("❗ 모든 항목을 입력해 주세요.")
