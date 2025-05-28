@@ -1,164 +1,131 @@
 import streamlit as st
 import pandas as pd
-import requests
 import folium
-from streamlit_folium import st_folium
 
-# ─── 페이지 설정 ─────────────────────────────────────────
-st.set_page_config(
-    page_title="동대문구 건강지원센터",
-    page_icon="🏥",
-    layout="wide"
-)
+# Set page config for wide layout and title
+st.set_page_config(page_title="동대문구 돌봄 지도", layout="wide")
 
-# ─── 데이터 로드 & 검증 ───────────────────────────────────
-try:
-    centers = pd.read_csv("centers.csv", encoding="utf-8-sig")
-except FileNotFoundError:
-    st.error("❗ centers.csv 파일을 찾을 수 없습니다.")
-    st.stop()
+# Inject CSS for styling (fonts, spacing, color palette, badges)
+st.markdown("""
+<style>
+    body {
+        font-family: 'Helvetica Neue', sans-serif;
+        background-color: #f9f9f9;
+        color: #333333;
+    }
+    .stApp { padding: 1rem; }
+    h1, h2, h3, h4 {
+        color: #2c3e50;
+        margin-top: 1rem;
+        margin-bottom: 0.5rem;
+    }
+    .badge {
+        display: inline-block;
+        padding: 0.3em 0.6em;
+        margin: 0 0.2em;
+        font-size: 0.85em;
+        font-weight: 600;
+        color: #fff;
+        background-color: #3498db;
+        border-radius: 10px;
+    }
+</style>
+""", unsafe_allow_html=True)
 
-required = {"name","lat","lng","feature","programs","categories","dong"}
-if not required.issubset(centers.columns):
-    st.error(f"❗ centers.csv에 다음 컬럼이 필요합니다: {', '.join(required)}")
-    st.stop()
+# Load center/program data
+df = pd.read_csv("centers.csv")
 
-# ─── 사이드바 메뉴 ───────────────────────────────────────
-st.sidebar.header("📌 메뉴")
-page = st.sidebar.radio("", ["소개", "건강지원센터지도", "프로그램 목록", "프로그램 신청"])
+# Prepare dong-level tags (based on 고령자 인구 비율 & 의료기관 밀도 산식):contentReference[oaicite:0]{index=0}
+dong_tags = {
+    "휘경2동": ["#고령인구많음", "#의료기관부족"],
+    "이문2동": ["#의료기관부족"],
+    "답십리2동": ["#고령인구많음", "#의료기관부족"]
+}
 
-# ─── 1️⃣ 소개 페이지 ─────────────────────────────────────────
-if page == "소개":
-    st.title("🏥 동대문구 건강지원센터 소개")
-    st.markdown("""
-    **1. 동대문구 각 동별 건강지원센터 설립**  
-    - 병원 인프라가 약한 상위 3개 동 우선  
-    **2. 병원 연계 사후관리**  
-    - 진료 환자 사후관리, 미진료 주민 기초 검사·상담  
-    **3. 1:1 맞춤 건강증진 프로그램 & 병원 추천**  
-    **4. 건강동아리 구성**  
-    - 보건소·학교·복지관 협약, 주민 설문 기반 체험·교육  
+# Create tabs for sections
+tabs = st.tabs(["소개", "건강지원센터 지도", "프로그램 목록", "프로그램 신청"])
 
-    ### 🎯 목적
-    1. 만성질환 조기 예방  
-    2. 건강생활습관 개선 프로그램 제공  
-    """)
-    st.image("https://source.unsplash.com/1600x400/?health,clinic")
+# 1. Introduction tab
+with tabs[0]:
+    st.header("소개")
+    st.write("동대문구 건강돌봄 지도 웹앱에 오신 것을 환영합니다. 이 앱은 동대문구 내 건강지원센터 현황과 프로그램 정보를 제공합니다.")
+    st.write("지도를 통해 지역별 건강지원센터의 위치와 특성을 확인하고, 다양한 건강 지원 프로그램을 찾아볼 수 있습니다. "
+             "대상자별 맞춤 프로그램과 건강 증진을 위한 정보를 손쉽게 얻어보세요.")
 
-# ─── 2️⃣ 건강지원센터 지도 페이지 ─────────────────────────────────
-elif page == "건강지원센터지도":
-    st.title("📍 건강지원센터 위치 지도")
+# 2. Map tab
+with tabs[1]:
+    st.header("건강지원센터 지도")
+    # Use unique centers for mapping to avoid duplicate markers
+    centers = df[['Dong', 'CenterName', 'Latitude', 'Longitude']].drop_duplicates()
+    # Initialize folium map centered roughly at Dongdaemun
+    map_center = [df['Latitude'].mean(), df['Longitude'].mean()]
+    m = folium.Map(location=map_center, zoom_start=13)
+    # Add a marker for each center with popup showing center name and dong tags
+    for _, row in centers.iterrows():
+        dong = row['Dong']; name = row['CenterName']
+        lat = row['Latitude']; lon = row['Longitude']
+        tags_html = " ".join([
+            f"<span style=\"background-color:#3498db; padding:2px 5px; border-radius:5px; color:white; font-size:0.85em;\">{tag}</span>"
+            for tag in dong_tags.get(dong, [])
+        ])
+        popup_html = f"<b>{name}</b><br/>{tags_html}"
+        folium.Marker([lat, lon], popup=popup_html).add_to(m)
+    # Display map in Streamlit
+    st.components.v1.html(m._repr_html_(), width=800, height=600)
 
-    # 필터 UI
-    c1, c2, c3 = st.columns([2, 3, 3])
-    with c1:
-        sel_dong = st.selectbox("행정동", ["전체"] + sorted(centers["dong"].unique()))
-    with c2:
-        kw = st.text_input("센터명 검색", placeholder="예) 회기센터")
-    with c3:
-        cats = sorted({c for subs in centers["categories"].dropna() for c in subs.split(";")})
-        sel_cats = st.multiselect("대상군", cats)
+# 3. Program list tab
+with tabs[2]:
+    st.header("프로그램 목록")
+    # Optional filter by target category
+    categories = sorted([c for c in df['Category'].unique() if c != "일반"])
+    selected_cats = st.multiselect("대상자별 프로그램 필터", categories, default=[])
+    # Group programs and display each with tags and centers
+    for program_name, group in df.groupby('ProgramName'):
+        category = group['Category'].iloc[0]
+        if selected_cats and category not in selected_cats:
+            continue  # skip if not matching filter
+        # Infer tags from program name (target group + purpose)
+        target_tag = f"#{category}" if category in ["노인", "청소년", "아동", "임산부", "장애인", "여성", "남성"] else ""
+        purpose_tags = []
+        if any(word in program_name for word in ["정신", "우울", "스트레스", "심리", "정서"]):
+            purpose_tags.append("#정신건강")
+        if "예방" in program_name or "금연" in program_name:
+            purpose_tags.append("#예방")
+        if any(word in program_name for word in ["운동", "체조", "요가", "재활"]):
+            purpose_tags.append("#운동")
+        if "영양" in program_name:
+            purpose_tags.append("#영양")
+        if "상담" in program_name:
+            purpose_tags.append("#상담")
+        if "교육" in program_name:
+            purpose_tags.append("#교육")
+        if "치매" in program_name:
+            purpose_tags.append("#치매")
+        if "검진" in program_name:
+            purpose_tags.append("#검진")
+        purpose_tags = sorted(set(purpose_tags))
+        all_tags = ([target_tag] if target_tag else []) + purpose_tags
+        tags_html = " ".join(f"<span class='badge'>{tag}</span>" for tag in all_tags)
+        centers_list = sorted(group['CenterName'].unique())
+        centers_str = ", ".join(centers_list)
+        st.markdown(f"**{program_name}** {tags_html}<br/>"
+                    f"<span style='color:gray; font-size:0.9em;'>**제공 센터:** {centers_str}</span>",
+                    unsafe_allow_html=True)
 
-    # 필터링
-    mask = pd.Series(True, index=centers.index)
-    if sel_dong != "전체":
-        mask &= centers["dong"] == sel_dong
-    if kw:
-        mask &= centers["name"].str.contains(kw, case=False, na=False)
-    if sel_cats:
-        mask &= centers["categories"].apply(lambda s: any(c in s.split(";") for c in sel_cats))
-    df = centers[mask]
-    st.caption(f"표시된 센터: {len(df)}개")
-
-    # Folium 지도 생성
-    if not df.empty:
-        center_lat = df["lat"].mean()
-        center_lng = df["lng"].mean()
-        zoom_start = 14 if sel_dong == "전체" else 16
-    else:
-        center_lat, center_lng, zoom_start = 37.57436, 127.03953, 13
-
-    m = folium.Map(location=[center_lat, center_lng], zoom_start=zoom_start, tiles="cartodbpositron")
-
-    # 행정동 GeoJSON 하이라이트
-    GEO_URL = (
-        "https://raw.githubusercontent.com/"
-        "raqoon886/Local_HangJeongDong/master/"
-        "hangjeongdong_서울특별시.geojson"
-    )
-    gj = requests.get(GEO_URL).json()
-    def style_fn(feat):
-        nm = feat["properties"].get("adm_nm", "")
-        sel = (sel_dong != "전체" and sel_dong in nm)
-        return {
-            "fillColor": "#0055FF" if sel else "#ffffff",
-            "color":     "#0055FF" if sel else "#999999",
-            "weight":    2 if sel else 1,
-            "fillOpacity": 0.3 if sel else 0.0,
-        }
-    folium.GeoJson(
-        gj,
-        style_function=style_fn,
-        tooltip=folium.GeoJsonTooltip(fields=["adm_nm"], aliases=["행정동"])
-    ).add_to(m)
-
-    # 센터 마커 (중복된 이름 한 번씩만 표시)
-    for _, r in df.drop_duplicates(subset=["name"]).iterrows():
-        title = r["name"].replace("돌봄센터", "건강지원센터")
-        popup_html = f"""
-          <div style="max-width:250px;font-family:Arial, sans-serif;">
-            <h4 style="margin:0 0 6px;">{title}</h4>
-            <p style="margin:0;font-weight:600;">프로그램:</p>
-            <ul style="margin:4px 0 0 16px 16px;padding:0;list-style:disc;">
-              <li>{r['programs']}</li>
-            </ul>
-          </div>
-        """
-        folium.Marker(
-            [r["lat"], r["lng"]],
-            tooltip=title,
-            popup=folium.Popup(popup_html, max_width=300),
-            icon=folium.Icon(color="green", icon="plus-sign")
-        ).add_to(m)
-
-    st_folium(m, width="100%", height=650)
-
-# ─── 3️⃣ 프로그램 목록 페이지 ───────────────────────────────────
-elif page == "프로그램 목록":
-    st.title("📋 현재 운영중인 프로그램")
-
-    dfp = centers[["name", "programs"]].fillna("").copy()
-    dfp["programs"] = dfp["programs"].str.split(";")
-    dfp = dfp.explode("programs")
-    dfp["programs"] = dfp["programs"].str.strip()
-    dfp = dfp[dfp["programs"] != ""]
-
-    for prog, grp in dfp.groupby("programs"):
-        names = grp["name"].tolist()
-        with st.expander(f"{prog} ({len(names)}개 센터)"):
-            for nm in names:
-                st.write(f"- {nm}")
-
-# ─── 4️⃣ 프로그램 신청 페이지 ─────────────────────────────────
-else:  # 프로그램 신청
-    st.title("📝 프로그램 신청")
-
-    dfp = centers[["programs"]].fillna("").copy()
-    dfp["programs"] = dfp["programs"].str.split(";")
-    dfp = dfp.explode("programs")
-    dfp["programs"] = dfp["programs"].str.strip()
-    programs = sorted(dfp[dfp["programs"] != ""].programs.unique())
-
-    if not programs:
-        st.info("등록된 프로그램이 없습니다.")
-        st.stop()
-
-    sel_prog  = st.selectbox("프로그램 선택", programs)
-    user_name = st.text_input("이름")
-    contact   = st.text_input("연락처", placeholder="010-1234-5678")
-
-    if st.button("신청하기"):
-        if sel_prog and user_name and contact:
-            st.success(f"✅ '{sel_prog}' 신청이 완료되었습니다!")
-        else:
-            st.error("❗ 모든 항목을 입력해주세요.")
+# 4. Program application tab
+with tabs[3]:
+    st.header("프로그램 신청")
+    st.write("참여를 원하는 프로그램을 선택하고 신청자 정보를 입력해주세요.")
+    with st.form(key="apply_form"):
+        program_options = sorted(df['ProgramName'].unique())
+        chosen_program = st.selectbox("프로그램 선택", program_options)
+        name = st.text_input("이름")
+        contact = st.text_input("연락처")
+        agree = st.checkbox("개인정보 제공에 동의합니다")
+        submitted = st.form_submit_button("신청")
+        if submitted:
+            if not (name and contact and agree):
+                st.error("모든 정보를 입력하고 동의에 체크해주세요.")
+            else:
+                st.success(f"✔️ {name} 님, '{chosen_program}' 프로그램 신청이 완료되었습니다!")
+                st.balloons()
