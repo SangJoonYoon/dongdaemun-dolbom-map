@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 import streamlit.components.v1 as components
 
 load_dotenv()
-KAKAO_JS_KEY = os.getenv("KAKAO_JS_KEY")
+KAKAO_JS_KEY = os.getenv("49a701f08a231a6895dca5db6de5869a")
 if not KAKAO_JS_KEY:
     st.error("❗ Kakao JavaScript 키를 환경변수 `KAKAO_JS_KEY` 에 설정해주세요.")
     st.stop()
